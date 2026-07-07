@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Popin — turn any link into a room</title>
+<!-- AIDEV-NOTE: single-file runtime discipline. No build step. PeerJS 1.5.5 star topology (host = hub). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+/* AIDEV-NOTE: palette — ink violet base, coral = human energy (reactions), mint = connection state, paper = the ticket */
+:root{
+  --ink:#141020; --panel:#1e1830; --panel2:#251d3a; --line:#332a4d;
+  --text:#ece7f2; --dim:#9b90b8;
+  --coral:#ff5d73; --mint:#4ee0b8; --paper:#f6efe0; --paper-ink:#221a10;
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--ink); color:var(--text);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  overflow:hidden;
+}
+.display{font-family:"Bricolage Grotesque",system-ui,sans-serif;letter-spacing:-.02em}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input{font:inherit}
+a{color:var(--mint)}
+::selection{background:var(--coral);color:#fff}
+
+/* ---------- landing ---------- */
+#landing{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding:24px}
+.brand{font-size:15px;color:var(--dim);letter-spacing:.18em;text-transform:uppercase}
+.hero{font-size:clamp(30px,5vw,52px);font-weight:800;text-align:center;max-width:16em;line-height:1.1}
+.hero em{font-style:normal;color:var(--coral)}
+/* AIDEV-NOTE: signature element — the ticket. Temporary admission metaphor: rooms are stubs, not accounts. */
+.ticket{
+  background:var(--paper);color:var(--paper-ink);
+  width:min(560px,94vw);border-radius:10px;padding:26px 28px;position:relative;
+  box-shadow:0 18px 50px rgba(0,0,0,.5);
+  -webkit-mask:radial-gradient(circle 9px at 0 66%,transparent 98%,#000) left/51% 100% no-repeat,
+              radial-gradient(circle 9px at 100% 66%,transparent 98%,#000) right/51% 100% no-repeat;
+  mask:radial-gradient(circle 9px at 0 66%,transparent 98%,#000) left/51% 100% no-repeat,
+       radial-gradient(circle 9px at 100% 66%,transparent 98%,#000) right/51% 100% no-repeat;
+}
+.ticket .tk-label{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#8a7a5c;margin-bottom:10px}
+.ticket .tk-row{display:flex;gap:10px}
+.ticket input[type=url]{
+  flex:1;border:2px solid #d8cbaa;border-radius:8px;background:#fffdf7;color:var(--paper-ink);
+  padding:12px 14px;font-size:15px;min-width:0;
+}
+.ticket input[type=url]:focus{outline:2px solid var(--coral);outline-offset:1px;border-color:transparent}
+.tk-go{background:var(--paper-ink);color:var(--paper);border-radius:8px;padding:12px 20px;font-weight:700;white-space:nowrap}
+.tk-go:hover{background:#000}
+.tk-perf{border-top:2px dashed #cbbd9a;margin:18px -28px 12px;position:relative;top:2px}
+.tk-fine{font-size:12px;color:#8a7a5c;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.hint{color:var(--dim);font-size:13px;text-align:center;max-width:34em}
+
+/* ---------- room shell ---------- */
+#room{display:none;height:100%;flex-direction:column}
+header{
+  display:flex;align-items:center;gap:14px;padding:10px 16px;
+  background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;
+}
+.logo{font-weight:800;font-size:17px}
+.logo .dot{color:var(--coral)}
+.url-chip{
+  color:var(--dim);font-size:13px;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:ui-monospace,Menlo,monospace;
+}
+.spacer{flex:1}
+.presence{display:flex;align-items:center}
+.pav{
+  width:30px;height:30px;border-radius:50%;background:var(--panel2);border:2px solid var(--ink);
+  display:flex;align-items:center;justify-content:center;font-size:15px;margin-left:-8px;
+}
+.pav:first-child{margin-left:0}
+.pcount{font-size:13px;color:var(--dim);margin-left:8px}
+.share-btn{
+  background:var(--paper);color:var(--paper-ink);border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;
+  display:flex;align-items:center;gap:6px;
+}
+.share-btn:hover{background:#fff}
+.status{font-size:12px;display:flex;align-items:center;gap:6px;color:var(--dim)}
+.status .led{width:8px;height:8px;border-radius:50%;background:#777;transition:background .3s}
+.status.ok .led{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+.status.bad .led{background:var(--coral)}
+
+main{flex:1;display:flex;min-height:0}
+/* ---------- content area ---------- */
+#stage{flex:1;position:relative;background:#0c0916;min-width:0;display:flex;flex-direction:column}
+#frame{flex:1;border:0;width:100%;background:#fff}
+#fallback{
+  position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding:24px;text-align:center;background:var(--ink);
+}
+#fallback .big{font-size:22px;font-weight:700}
+#fallback p{color:var(--dim);max-width:36em;font-size:14px}
+.open-tab{background:var(--mint);color:#0a2c22;border-radius:8px;padding:11px 18px;font-weight:700}
+#tabbar{
+  display:flex;align-items:center;gap:10px;padding:7px 14px;background:var(--panel2);
+  border-top:1px solid var(--line);font-size:13px;color:var(--dim);
+}
+#tabbar a{color:var(--mint);font-weight:600;text-decoration:none}
+#tabbar a:hover{text-decoration:underline}
+/* floating reactions layer */
+#fx{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.float-e{
+  position:absolute;bottom:-40px;font-size:34px;
+  animation:rise 2.6s ease-out forwards;
+}
+@keyframes rise{
+  0%{transform:translateY(0) scale(.6);opacity:0}
+  12%{opacity:1;transform:translateY(-8vh) scale(1.1)}
+  100%{transform:translateY(-80vh) scale(.9) rotate(14deg);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .float-e{animation:none;opacity:0}
+}
+
+/* ---------- side panel ---------- */
+#panel{
+  width:330px;background:var(--panel);border-left:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0;
+}
+.sec-h{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);padding:12px 14px 6px}
+/* poll */
+#pollbox{padding:0 14px 12px;border-bottom:1px solid var(--line)}
+#poll-empty button{
+  width:100%;border:1px dashed var(--line);border-radius:8px;padding:9px;color:var(--dim);font-size:13px;
+}
+#poll-empty button:hover{color:var(--text);border-color:var(--dim)}
+.poll-q{font-weight:700;margin-bottom:8px;font-size:14px}
+.poll-opt{
+  position:relative;display:block;width:100%;text-align:left;border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px;overflow:hidden;
+}
+.poll-opt .bar{position:absolute;inset:0;background:var(--mint);opacity:.14;transform-origin:left;transition:transform .3s}
+.poll-opt .lab{position:relative;display:flex;justify-content:space-between;gap:8px}
+.poll-opt.mine{border-color:var(--mint)}
+.poll-opt:hover{border-color:var(--dim)}
+.poll-meta{font-size:11px;color:var(--dim);display:flex;justify-content:space-between}
+.poll-meta button{color:var(--coral);font-size:11px}
+/* chat */
+#chat{flex:1;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.msg{font-size:13.5px;word-wrap:break-word}
+.msg .who{font-weight:700;margin-right:6px}
+.msg.sys{color:var(--dim);font-size:12px;font-style:italic}
+#composer{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
+#composer input{
+  flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  color:var(--text);padding:9px 12px;font-size:14px;min-width:0;
+}
+#composer input:focus{outline:none;border-color:var(--mint)}
+#send{background:var(--coral);color:#fff;border-radius:8px;padding:0 14px;font-weight:700}
+/* reaction bar */
+#reactbar{display:flex;gap:6px;padding:10px 14px;border-top:1px solid var(--line);justify-content:space-between}
+.rx{
+  flex:1;font-size:20px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 0;
+  transition:transform .1s;
+}
+.rx:active{transform:scale(1.25)}
+.rx:hover{border-color:var(--coral)}
+
+/* ---------- modals ---------- */
+.modal-bg{position:fixed;inset:0;background:rgba(10,7,18,.75);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;width:min(420px,94vw)}
+.modal h3{font-size:17px;margin-bottom:12px}
+.modal input{
+  width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
+  padding:10px 12px;margin-bottom:8px;font-size:14px;
+}
+.modal input:focus{outline:none;border-color:var(--mint)}
+.modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.btn-p{background:var(--mint);color:#0a2c22;border-radius:8px;padding:9px 16px;font-weight:700}
+.btn-s{color:var(--dim);padding:9px 12px}
+.btn-s:hover{color:var(--text)}
+.emoji-pick{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.emoji-pick button{font-size:22px;padding:5px 8px;border-radius:8px;border:1px solid transparent}
+.emoji-pick button.sel{border-color:var(--mint);background:var(--panel2)}
+/* toast */
+#toast{
+  position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(80px);
+  background:var(--paper);color:var(--paper-ink);border-radius:10px;padding:10px 18px;font-weight:600;font-size:14px;
+  transition:transform .25s;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.5);
+}
+#toast.show{transform:translateX(-50%) translateY(0)}
+
+/* ---------- mobile ---------- */
+@media (max-width:760px){
+  main{flex-direction:column}
+  #panel{width:100%;height:46%;border-left:none;border-top:1px solid var(--line)}
+  .url-chip{display:none}
+  #stage{height:54%}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ LANDING ============ -->
+<div id="landing">
+  <div class="brand">Popin</div>
+  <h1 class="hero display">Paste a link.<br>Friends <em>pop in</em>.<br>Room vanishes when you leave.</h1>
+  <div class="ticket">
+    <div class="tk-label">Admit everyone &middot; one link &middot; no signup</div>
+    <div class="tk-row">
+      <input type="url" id="url-in" placeholder="https://any-link-worth-talking-about.com" autocomplete="off">
+      <button class="tk-go" id="create-btn">Open a room</button>
+    </div>
+    <div class="tk-perf"></div>
+    <div class="tk-fine">
+      <span>Zero backend &middot; peer-to-peer (WebRTC)</span>
+      <span>Your tab is the room</span>
+    </div>
+  </div>
+  <p class="hint">Watch together, react, vote, decide. Chat and votes travel browser-to-browser — nothing is stored anywhere. Close the tab and the room is gone.</p>
+</div>
+
+<!-- ============ ROOM ============ -->
+<div id="room">
+  <header>
+    <div class="logo display">popin<span class="dot">.</span></div>
+    <div class="url-chip" id="url-chip"></div>
+    <div class="status" id="status"><span class="led"></span><span id="status-t">connecting…</span></div>
+    <div class="spacer"></div>
+    <div class="presence" id="presence"></div>
+    <span class="pcount" id="pcount"></span>
+    <button class="share-btn" id="share-btn">🎟 Copy invite</button>
+  </header>
+  <main>
+    <div id="stage">
+      <iframe id="frame" title="shared page" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" allow="autoplay; fullscreen; encrypted-media"></iframe>
+      <div id="fallback">
+        <div class="big display">This site refuses to be framed.</div>
+        <p>Many sites (news, shops, social) block embedding. No problem — open it in a tab and keep this room beside it. Reactions, chat, and votes stay live.</p>
+        <button class="open-tab" id="open-tab-btn">Open page in new tab ↗</button>
+      </div>
+      <div id="tabbar">
+        <span>Shared page:</span>
+        <a href="#" id="tab-link" target="_blank" rel="noopener"></a>
+        <span style="flex:1"></span>
+        <button id="frame-toggle" style="color:var(--dim);font-size:12px">page won't load?</button>
+      </div>
+      <div id="fx"></div>
+    </div>
+    <div id="panel">
+      <div class="sec-h">Live poll</div>
+      <div id="pollbox">
+        <div id="poll-empty"><button id="new-poll-btn">+ Start a vote</button></div>
+        <div id="poll-live" style="display:none"></div>
+      </div>
+      <div class="sec-h">Room chat</div>
+      <div id="chat"></div>
+      <div id="reactbar"></div>
+      <div id="composer">
+        <input id="chat-in" placeholder="Say something…" maxlength="500" autocomplete="off">
+        <button id="send">→</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- name modal -->
+<div class="modal-bg" id="name-modal">
+  <div class="modal">
+    <h3 class="display">Who's popping in?</h3>
+    <div class="emoji-pick" id="emoji-pick"></div>
+    <input id="name-in" placeholder="Your name" maxlength="24" autocomplete="off">
+    <div class="row"><button class="btn-p" id="name-ok">Join room</button></div>
+  </div>
+</div>
+
+<!-- poll modal -->
+<div class="modal-bg" id="poll-modal">
+  <div class="modal">
+    <h3 class="display">Start a vote</h3>
+    <input id="pq" placeholder="Question — e.g. Buy it?" maxlength="120">
+    <input id="po1" placeholder="Option 1" maxlength="60">
+    <input id="po2" placeholder="Option 2" maxlength="60">
+    <input id="po3" placeholder="Option 3 (optional)" maxlength="60">
+    <div class="row">
+      <button class="btn-s" id="poll-cancel">Cancel</button>
+      <button class="btn-p" id="poll-ok">Launch</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+ * Popin — link-to-live-room, zero backend.
+ * AIDEV-NOTE: star topology. Room creator = PeerJS hub (authoritative
+ * for presence + poll tallies). Guests connect to host id from URL hash.
+ * Room dies with the host tab — that's the product, not a bug.
+ * ===================================================================== */
+
+// ---------- storage (localStorage with in-memory fallback, pi.* namespace) ----------
+const store = (() => {
+  let mem = {};
+  const ok = (() => { try { localStorage.setItem('pi.t','1'); localStorage.removeItem('pi.t'); return true; } catch(e){ return false; } })();
+  return {
+    get: k => ok ? localStorage.getItem('pi.'+k) : (mem[k] ?? null),
+    set: (k,v) => { try { ok ? localStorage.setItem('pi.'+k, v) : (mem[k]=v); } catch(e){ mem[k]=v; } }
+  };
+})();
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const REACTIONS = ['🔥','😂','❤️','👀','👍','🤔'];
+const AVATARS = ['🦊','🐙','🦉','🐸','🦄','🐝','🐢','🦈','🐨','🦜'];
+let toastTimer;
+function toast(t){ const el=$('toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'),2200); }
+
+// AIDEV-NOTE: X-Frame-Options denial is NOT reliably detectable cross-origin.
+// Strategy: always show the tab bar; user can flip to fallback view manually.
+// Special-case YouTube → /embed/ which permits framing.
+function embeddableUrl(u){
+  try {
+    const url = new URL(u);
+    if (/(^|\.)youtube\.com$/.test(url.hostname) && url.pathname === '/watch' && url.searchParams.get('v'))
+      return 'https://www.youtube.com/embed/' + url.searchParams.get('v');
+    if (url.hostname === 'youtu.be')
+      return 'https://www.youtube.com/embed/' + url.pathname.slice(1);
+    return u;
+  } catch(e){ return u; }
+}
+
+// ---------- state ----------
+const S = {
+  isHost: false,
+  peer: null,          // my Peer
+  hostConn: null,      // guest → host DataConnection
+  conns: new Map(),    // host: peerId → conn
+  me: { name:'', emoji:'🦊' },
+  roster: new Map(),   // peerId → {name,emoji}  (host authoritative, mirrored on guests)
+  poll: null,          // {q, opts[], votes:{peerId:i}, by}
+  url: '',
+  myId: null,
+  retries: 0
+};
+
+// ---------- boot ----------
+const hash = new URLSearchParams(location.hash.slice(1));
+if (hash.get('r') && hash.get('u')) {
+  bootRoom(false, decodeURIComponent(hash.get('u')), hash.get('r'));
+} else {
+  $('landing').style.display = 'flex';
+  $('create-btn').onclick = () => {
+    let u = $('url-in').value.trim();
+    if (!u) return toast('Paste a link first');
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    try { new URL(u); } catch(e){ return toast('That does not look like a URL'); }
+    bootRoom(true, u, null);
+  };
+  $('url-in').addEventListener('keydown', e => { if (e.key==='Enter') $('create-btn').click(); });
+}
+
+function bootRoom(isHost, url, hostId){
+  S.isHost = isHost; S.url = url;
+  $('landing').style.display = 'none';
+  $('room').style.display = 'flex';
+  // content
+  $('url-chip').textContent = url;
+  $('tab-link').textContent = new URL(url).hostname;
+  $('tab-link').href = url;
+  $('open-tab-btn').onclick = () => window.open(url, '_blank', 'noopener');
+  $('frame-toggle').onclick = () => {
+    const f = $('fallback');
+    const showing = f.style.display === 'flex';
+    f.style.display = showing ? 'none' : 'flex';
+    $('frame-toggle').textContent = showing ? "page won't load?" : 'try the frame again';
+  };
+  $('frame').src = embeddableUrl(url);
+  // reaction bar
+  REACTIONS.forEach(e => {
+    const b = document.createElement('button');
+    b.className = 'rx'; b.textContent = e;
+    b.onclick = () => { spawnFloat(e); send({t:'react', e}); };
+    $('reactbar').appendChild(b);
+  });
+  // identity modal
+  const pick = $('emoji-pick');
+  AVATARS.forEach(e => {
+    const b = document.createElement('button');
+    b.textContent = e;
+    b.onclick = () => { S.me.emoji = e; [...pick.children].forEach(c=>c.classList.remove('sel')); b.classList.add('sel'); };
+    pick.appendChild(b);
+  });
+  S.me.emoji = store.get('emoji') || AVATARS[Math.floor(Math.random()*AVATARS.length)];
+  [...pick.children].find(c=>c.textContent===S.me.emoji)?.classList.add('sel');
+  $('name-in').value = store.get('name') || '';
+  $('name-modal').style.display = 'flex';
+  $('name-in').focus();
+  const go = () => {
+    S.me.name = $('name-in').value.trim() || 'anon';
+    store.set('name', S.me.name); store.set('emoji', S.me.emoji);
+    $('name-modal').style.display = 'none';
+    initPeer(hostId);
+  };
+  $('name-ok').onclick = go;
+  $('name-in').addEventListener('keydown', e => { if (e.key==='Enter') go(); });
+  // chat + poll UI
+  $('send').onclick = sendChat;
+  $('chat-in').addEventListener('keydown', e => { if (e.key==='Enter') sendChat(); });
+  $('new-poll-btn').onclick = () => $('poll-modal').style.display = 'flex';
+  $('poll-cancel').onclick = () => $('poll-modal').style.display = 'none';
+  $('poll-ok').onclick = launchPoll;
+  $('share-btn').onclick = copyInvite;
+}
+
+// ---------- peer wiring ----------
+function setStatus(cls, t){ const s=$('status'); s.className='status '+cls; $('status-t').textContent=t; }
+
+function initPeer(hostId){
+  setStatus('', 'connecting…');
+  S.peer = new Peer(); // public PeerJS cloud broker — signaling only, media/data is P2P
+  S.peer.on('open', id => {
+    S.myId = id;
+    S.roster.set(id, {...S.me});
+    if (S.isHost) {
+      history.replaceState(null,'', '#r='+id+'&u='+encodeURIComponent(S.url));
+      setStatus('ok','room live — you are the host');
+      sysMsg('Room open. Anyone with your invite can pop in. Room ends if you close this tab.');
+      renderPresence();
+    } else {
+      connectToHost(hostId);
+    }
+  });
+  // AIDEV-NOTE: broker disconnect ≠ room death; data channels survive. Reconnect for new joiners.
+  S.peer.on('disconnected', () => { if (!S.peer.destroyed) S.peer.reconnect(); });
+  S.peer.on('error', err => {
+    if (err.type === 'peer-unavailable') roomGone();
+    else setStatus('bad', 'network error: '+err.type);
+  });
+  if (S.isHost) {
+    S.peer.on('connection', conn => {
+      conn.on('open', () => S.conns.set(conn.peer, conn));
+      conn.on('data', d => hostOnData(conn, d));
+      conn.on('close', () => hostDrop(conn.peer));
+      conn.on('error', () => hostDrop(conn.peer));
+    });
+  }
+}
+
+function connectToHost(hostId){
+  const conn = S.peer.connect(hostId, { reliable:true });
+  S.hostConn = conn;
+  conn.on('open', () => {
+    S.retries = 0;
+    setStatus('ok','connected');
+    conn.send({t:'hello', name:S.me.name, emoji:S.me.emoji});
+  });
+  conn.on('data', guestOnData);
+  conn.on('close', () => retryOrDie(hostId));
+  conn.on('error', () => retryOrDie(hostId));
+}
+
+// AIDEV-NOTE: host tab refresh gets a NEW peer id — old invite is dead by design.
+// Retries only cover transient network blips.
+function retryOrDie(hostId){
+  if (S.retries >= 3) return roomGone();
+  S.retries++;
+  setStatus('bad', 'reconnecting ('+S.retries+'/3)…');
+  setTimeout(() => connectToHost(hostId), 1200 * S.retries);
+}
+
+function roomGone(){
+  setStatus('bad','room ended');
+  sysMsg('The host left — this room is gone. The page link still works; start a fresh room to keep going.');
+}
+
+// ---------- protocol ----------
+// guest→host: hello / chat / react / pollStart / vote
+// host→all  : roster / chat / react / poll / bye
+function send(msg){
+  msg.from = S.myId;
+  if (S.isHost) { hostHandle(S.myId, msg); }
+  else if (S.hostConn?.open) { S.hostConn.send(msg); }
+}
+
+function hostOnData(conn, d){ if (d && typeof d==='object') hostHandle(conn.peer, d); }
+
+function hostHandle(fromId, d){
+  switch(d.t){
+    case 'hello':
+      S.roster.set(fromId, {name:String(d.name).slice(0,24), emoji:String(d.emoji).slice(0,4)});
+      broadcastRoster();
+      broadcast({t:'chat', sys:true, text: String(d.name).slice(0,24)+' popped in'});
+      if (S.poll) unicast(fromId, pollMsg());
+      break;
+    case 'chat': {
+      const who = S.roster.get(fromId) || {name:'?',emoji:''};
+      broadcast({t:'chat', name:who.name, emoji:who.emoji, text:String(d.text).slice(0,500)});
+      break;
+    }
+    case 'react':
+      if (REACTIONS.includes(d.e)) broadcast({t:'react', e:d.e, from:fromId});
+      break;
+    case 'pollStart':
+      S.poll = { q:String(d.q).slice(0,120), opts:d.opts.slice(0,4).map(o=>String(o).slice(0,60)), votes:{}, by:fromId };
+      broadcast(pollMsg());
+      break;
+    case 'vote':
+      if (S.poll && Number.isInteger(d.i) && d.i>=0 && d.i<S.poll.opts.length){
+        S.poll.votes[fromId] = d.i;
+        broadcast(pollMsg());
+      }
+      break;
+    case 'pollEnd':
+      if (S.poll && (fromId===S.poll.by || fromId===S.myId)){ S.poll=null; broadcast({t:'poll', poll:null}); }
+      break;
+  }
+}
+
+function pollMsg(){ return {t:'poll', poll:{q:S.poll.q, opts:S.poll.opts, votes:S.poll.votes, by:S.poll.by}}; }
+function broadcastRoster(){ broadcast({t:'roster', roster:[...S.roster.entries()]}); }
+function broadcast(msg){
+  applyLocal(msg); // host renders its own broadcasts
+  for (const c of S.conns.values()) if (c.open) c.send(msg);
+}
+function unicast(id, msg){ const c=S.conns.get(id); if (c?.open) c.send(msg); }
+function hostDrop(id){
+  const who = S.roster.get(id);
+  S.conns.delete(id); S.roster.delete(id);
+  if (S.poll) delete S.poll.votes[id];
+  broadcastRoster();
+  if (who) broadcast({t:'chat', sys:true, text: who.name+' left'});
+  if (S.poll) broadcast(pollMsg());
+}
+
+function guestOnData(d){ if (d && typeof d==='object') applyLocal(d); }
+
+// ---------- shared render path ----------
+function applyLocal(d){
+  switch(d.t){
+    case 'roster':
+      S.roster = new Map(d.roster);
+      renderPresence();
+      break;
+    case 'chat': addMsg(d); break;
+    case 'react': if (d.from !== S.myId) spawnFloat(d.e); break;
+    case 'poll': S.poll = d.poll; renderPoll(); break;
+  }
+}
+
+// ---------- UI: presence / chat / reactions / poll ----------
+function renderPresence(){
+  const p = $('presence'); p.innerHTML='';
+  const all=[...S.roster.values()];
+  all.slice(0,6).forEach(u => {
+    const d=document.createElement('div');
+    d.className='pav'; d.title=u.name; d.textContent=u.emoji;
+    p.appendChild(d);
+  });
+  $('pcount').textContent = all.length + (all.length===1?' (just you)':' here');
+}
+
+function addMsg(d){
+  const el=document.createElement('div');
+  if (d.sys){ el.className='msg sys'; el.textContent=d.text; }
+  else { el.className='msg'; el.innerHTML='<span class="who">'+esc(d.emoji)+' '+esc(d.name)+'</span>'+esc(d.text); }
+  const c=$('chat'); c.appendChild(el); c.scrollTop=c.scrollHeight;
+}
+function sysMsg(t){ addMsg({sys:true, text:t}); }
+
+function sendChat(){
+  const i=$('chat-in'); const t=i.value.trim();
+  if (!t) return;
+  i.value='';
+  send({t:'chat', text:t});
+}
+
+function spawnFloat(e){
+  const el=document.createElement('div');
+  el.className='float-e'; el.textContent=e;
+  el.style.left=(10+Math.random()*80)+'%';
+  $('fx').appendChild(el);
+  setTimeout(()=>el.remove(), 2700);
+}
+
+function launchPoll(){
+  const q=$('pq').value.trim();
+  const opts=[$('po1').value.trim(), $('po2').value.trim(), $('po3').value.trim()].filter(Boolean);
+  if (!q || opts.length<2) return toast('Need a question and 2+ options');
+  $('poll-modal').style.display='none';
+  $('pq').value=$('po1').value=$('po2').value=$('po3').value='';
+  send({t:'pollStart', q, opts});
+}
+
+function renderPoll(){
+  const live=$('poll-live'), empty=$('poll-empty');
+  if (!S.poll){ live.style.display='none'; empty.style.display='block'; return; }
+  empty.style.display='none'; live.style.display='block';
+  const counts=S.poll.opts.map(()=>0);
+  Object.values(S.poll.votes).forEach(i=>counts[i]++);
+  const total=Object.keys(S.poll.votes).length;
+  const mine=S.poll.votes[S.myId];
+  let h='<div class="poll-q">'+esc(S.poll.q)+'</div>';
+  S.poll.opts.forEach((o,i)=>{
+    const pct = total? counts[i]/total : 0;
+    h+='<button class="poll-opt'+(mine===i?' mine':'')+'" data-i="'+i+'">'
+      +'<span class="bar" style="transform:scaleX('+pct+')"></span>'
+      +'<span class="lab"><span>'+esc(o)+'</span><span>'+counts[i]+'</span></span></button>';
+  });
+  h+='<div class="poll-meta"><span>'+total+' vote'+(total===1?'':'s')+'</span>';
+  if (S.poll.by===S.myId || S.isHost) h+='<button id="end-poll">close poll</button>';
+  h+='</div>';
+  live.innerHTML=h;
+  live.querySelectorAll('.poll-opt').forEach(b=> b.onclick=()=>send({t:'vote', i:+b.dataset.i}));
+  const ep=live.querySelector('#end-poll'); if (ep) ep.onclick=()=>send({t:'pollEnd'});
+}
+
+// ---------- invite ----------
+function copyInvite(){
+  const link = location.href;
+  const done = () => toast('Invite copied — send it anywhere');
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(done, ()=>fallbackCopy(link, done));
+  else fallbackCopy(link, done);
+}
+function fallbackCopy(text, done){
+  const ta=document.createElement('textarea');
+  ta.value=text; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); done(); }catch(e){ prompt('Copy this invite link:', text); }
+  ta.remove();
+}
+
+// warn host before killing the room
+window.addEventListener('beforeunload', e => {
+  if (S.isHost && S.conns.size>0){ e.preventDefault(); e.returnValue=''; }
+});
+</script>
+</body>
+</html>
